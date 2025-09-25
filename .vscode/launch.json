@@ -1,0 +1,31 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"type": "lldb",
+			"request": "launch",
+			"name": "Debug `bevy`",
+			"cargo": {
+				"args": [
+					"run",
+					"--features", "bevy/dynamic_linking"
+				],
+			},
+			"args": [],
+			"cwd": "${workspaceFolder}"
+		},
+		{
+			"type": "lldb",
+			"request": "launch",
+			"name": "Test `bevy`",
+			"cargo": {
+				"args": [
+					"test",
+					"--features", "bevy/dynamic_linking"
+				],
+			},
+			"args": [],
+			"cwd": "${workspaceFolder}"
+		}
+	]
+}

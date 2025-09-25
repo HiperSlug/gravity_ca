@@ -1,2 +1,1 @@
-# gravity_CA
-cellular automata simulation that simulates gravity
+# Gravity Cellular Automata
