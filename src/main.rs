@@ -10,6 +10,7 @@ const LAST_BIT: u64 = 1 << (u64::BITS - 1);
 struct Chunk {
     some_masks: [u64; LEN],
     dynamic_masks: [u64; LEN],
+    state: bool,
 }
 
 impl Default for Chunk {
@@ -17,20 +18,29 @@ impl Default for Chunk {
         Self {
             some_masks: [0; LEN],
             dynamic_masks: [0; LEN],
+            state: default(),
         }
     }
 }
 
 impl Chunk {
     fn tick_single(&mut self) {
+        self.state = !self.state;
+
         for y in 1..LEN {
-            self.try_down(y);
-            self.try_down_left(y);
-            self.try_down_right(y);
+            self.down(y);
+
+            if (y % 2 == 0) ^ self.state {
+                self.down_left(y);
+                self.down_right(y);
+            } else {
+                self.down_left(y);
+                self.down_right(y);
+            }
         }
     }
 
-    fn try_down(&mut self, y: usize) {
+    fn down(&mut self, y: usize) {
         let dynamic_mask = self.dynamic_masks[y];
         let down_some_mask = self.some_masks[y - 1];
 
@@ -43,24 +53,10 @@ impl Chunk {
         self.dynamic_masks[y - 1] |= fall_mask;
     }
 
-    fn try_down_right(&mut self, y: usize) {
+    fn down_left(&mut self, y: usize) {
         let dynamic_mask = self.dynamic_masks[y];
-        let right_some_mask = (self.some_masks[y] >> 1) | LAST_BIT;
-        let down_right_some_mask = (self.some_masks[y - 1] >> 1) | LAST_BIT;
-
-        let fall_mask = dynamic_mask & !right_some_mask & !down_right_some_mask;
-
-        self.some_masks[y] &= !fall_mask;
-        self.dynamic_masks[y] &= !fall_mask;
-
-        self.some_masks[y - 1] |= fall_mask >> 1;
-        self.dynamic_masks[y - 1] |= fall_mask >> 1;
-    }
-
-    fn try_down_left(&mut self, y: usize) {
-        let dynamic_mask = self.dynamic_masks[y];
-        let left_some_mask = (self.some_masks[y] << 1) | FIRST_BIT;
-        let down_left_some_mask = (self.some_masks[y - 1] << 1) | FIRST_BIT;
+        let left_some_mask = (self.some_masks[y] >> 1) | FIRST_BIT;
+        let down_left_some_mask = (self.some_masks[y - 1] >> 1) | FIRST_BIT;
 
         let fall_mask = dynamic_mask & !left_some_mask & !down_left_some_mask;
 
@@ -69,6 +65,20 @@ impl Chunk {
 
         self.some_masks[y - 1] |= fall_mask << 1;
         self.dynamic_masks[y - 1] |= fall_mask << 1;
+    }
+
+    fn down_right(&mut self, y: usize) {
+        let dynamic_mask = self.dynamic_masks[y];
+        let right_some_mask = (self.some_masks[y] << 1) | LAST_BIT;
+        let down_right_some_mask = (self.some_masks[y - 1] << 1) | LAST_BIT;
+
+        let fall_mask = dynamic_mask & !right_some_mask & !down_right_some_mask;
+
+        self.some_masks[y] &= !fall_mask;
+        self.dynamic_masks[y] &= !fall_mask;
+
+        self.some_masks[y - 1] |= fall_mask >> 1;
+        self.dynamic_masks[y - 1] |= fall_mask >> 1;
     }
 
     fn iter_some(&self) -> impl Iterator<Item = UVec2> {
@@ -103,26 +113,22 @@ fn main() {
                 })
                 .set(ImagePlugin::default_nearest()),
         )
+        .insert_resource(Time::<Fixed>::from_hz(60.0))
         .init_resource::<Handles>()
         .add_systems(Startup, setup)
-        .add_systems(Update, (tick_simulation, mesh_cells).chain())
+        .add_systems(FixedUpdate, (tick_simulation, mesh_cells).chain())
         .run();
 }
 
 fn setup(mut commands: Commands) {
     fn mask_gen(i: usize) -> u64 {
-        if i == 63 {
-            u64::MAX
-        } else if i == 32 {
-            (1 << 32) - 1
-        } else {
-            0
-        }
+        if i > 5 { 1 << 32 | 1 << 30 } else { 0 }
     }
 
     commands.insert_resource(Chunk {
         some_masks: array::from_fn(mask_gen),
         dynamic_masks: array::from_fn(mask_gen),
+        ..default()
     });
 
     commands.spawn(Camera2d);
@@ -144,7 +150,9 @@ fn mesh_cells(
 
     for pos in chunk.iter_some() {
         commands.spawn((
-            Transform::from_translation((pos.as_vec2() - (SIZE.as_vec2() / 2.0)).extend(0.0) * DISPLAY_FACTOR as f32),
+            Transform::from_translation(
+                (pos.as_vec2() - (SIZE.as_vec2() / 2.0)).extend(0.0) * DISPLAY_FACTOR as f32,
+            ),
             Mesh2d(handles.0.clone()),
             MeshMaterial2d(handles.1.clone()),
             Cell,
