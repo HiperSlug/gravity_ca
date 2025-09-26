@@ -11,4 +11,3 @@ opt-level = 3
 
 [dependencies]
 bevy = "0.17.0-rc.2"
-itertools = "0.14.0"

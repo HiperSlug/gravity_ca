@@ -12,25 +12,22 @@ Phase 1:
 If this cell is `Some(Dynamic)` and the cell below is `None` then fall.
 Phase 2:
 For both directions: If this cell is still `Some(Dynamic)` its adjacent cells is `None`, and its diagonal cell is `None` then fall diagonally. 
-This will deterministically prioritize certain directions over others. I don't think it matters but I can later add randomness.
+This will deterministically prioritize certain directions over others. I don't think it matters but I can later add randomness. Either way it needs to be determinsitic meaning that the rng is seeded either per row or per cell. 
 
-Each cell is stored as 2 bits: A `Some`/`None` bit and a Dynamic/Stationary bit. These bits are in separate channels and are packed into a u64.
+Each cell is stored as 2 bits: A `Some`/`None` bit and a `Dynamic`/`Stationary` bit. These bits are in separate channels and are packed into a u64.
 
-Edited! - Each chunk of cells is 64x64 with one bit of padding. The single bit of padding should mean that chunks should avoid attempting to write the same cell at the same time as another chunk (this requires all cells to have deterministic falling priority or simulaneous computations on the same bit(b/c padding) may result in different outcomes). Additionally padding requires identical shift priorities, lest cells compete for a direction. Finally: Padding requires syncronization after EVERY operation. When doing left/right diagonal fall checking we need to check left, sync, check right, sync. 
-New! - Each cell needs two bits of padding. In order to simulate a full pass where each cell can move exactly one cell per tick, then exactly two bits (the first one for simulating the movement of boundary cells, the second for simulating the movement of padding cells.) All simulation failing b/c of no more padding will be corrected during a syncronization step. This also means that if I allow a cell to move, for example, two cells away i'll need to increase the padding.
-
+Each chunk of cells is 64x64. No padding. Neighbor access will be accomplished through raw pointers, so I have to ensure safety. Additionally diagonal chunks can be accessed indirectly by following a neighbor chunk. On removal Pointers are recursivly removed.
 
 ```rust
 struct Chunk {
 	some_mask: [u64; 64],
 	dynamic_mask: [u64; 64],
+	neighbors: [Option<NonNull<Chunk>>; 4],
 }
 ```
 The x position of a cell is the bit position. The y position of the cell is the array index.
 
-We process all rows in a chunck except the first row. 1..63. 
-For each row we use `&` to locate all cells which are dynamic and also have certain neighbor conditions.
-Then once we have located all cells that satisfy the neighbor conditions we move cells in bulk.
+When simulating gravity if a cell attempts to enter a nonexistent chunk we need to create it, but not simulate it until next frame.
 
 ex:
 ```rust
@@ -48,4 +45,14 @@ for y in 1..64 { // exclude bottom padding, include top padding
 }
 ```
 
-After every right/left change we need to syncronize with the adjacnet chunks. And after we have finished processing a row we need to syncronize with the chunks below and above. Then we process the next row of chunks.
+# Parrallelism
+We can process a single row of bits at the same time. To achieve this we group chunks by their y position. Then for each y in that layer of chunks we do the following:
+1. Collect neighbor data for a row. For corner simulation multiple chunks may need to be referenced.
+2. Simulate gravity for that row.
+3. Repeat for each row in all chunks.
+
+Step 1 and 2 are separate steps which should allow parrallelism because step 1 requires multiple immutable references to the same chunks while step two requires mutable access to every chunk. In other words both of these steps can be easily parrallelized.
+
+
+
+# NVM MVP is just a single chunk simulating
