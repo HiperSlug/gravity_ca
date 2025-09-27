@@ -11,3 +11,4 @@ opt-level = 3
 
 [dependencies]
 bevy = "0.17.0-rc.2"
+enum-map = "2.7.3"
