@@ -1,5 +1,9 @@
-use bevy::prelude::*;
-use std::{array, iter::from_fn};
+use bevy::{
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+    tasks::ParallelIterator,
+};
+use std::{array, collections::BTreeMap, iter::from_fn};
 
 const LEN: usize = u64::BITS as usize;
 
@@ -93,6 +97,43 @@ impl Chunk {
                     Some(UVec2::new(x, y as u32))
                 }
             })
+        })
+    }
+}
+
+struct LayerStore {
+    map: HashMap<i32, Chunk>,
+    simulate: HashSet<i32>,
+}
+
+struct ChunkStore {
+    map: BTreeMap<i32, LayerStore>,
+    simulate: HashSet<i32>,
+}
+
+impl ChunkStore {
+    fn iter_layers(
+        &mut self,
+    ) -> impl Iterator<Item = (Vec<(&i32, &mut Chunk)>, &mut HashMap<i32, Chunk>)> {
+        debug_assert!(self.simulate.iter().all(|k| self.map.contains_key(&(k - 1))
+            && self.map.contains_key(&k)
+            && self.map.contains_key(&(k + 1))));
+
+        self.simulate.iter().map(|y| {
+            let layer_store = self.map.get_mut(&y).unwrap();
+            // SAFETY
+            // k != (k - 1)
+            let last_layer_store = unsafe { self.map.get_mut(&(y - 1)).unwrap() };
+
+            let mut_chunks = layer_store
+                .map
+                .iter_mut()
+                .filter(|(x, _)| layer_store.simulate.contains(x))
+                .collect::<Vec<_>>();
+
+            let last_layer_map = &mut last_layer_store.map;
+
+            (mut_chunks, last_layer_map)
         })
     }
 }
