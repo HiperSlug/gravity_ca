@@ -1,4 +1,4 @@
-mod y_zero;
+mod y0;
 
 use bevy::{
     platform::collections::{HashMap, HashSet},
@@ -8,7 +8,7 @@ use std::{array, collections::BTreeSet, iter::from_fn};
 
 const LEN: usize = u64::BITS as usize;
 
-#[derive(Resource, Clone)]
+#[derive(Clone)]
 struct Chunk {
     some_masks: [u64; LEN],
     gravity_masks: [u64; LEN],
@@ -16,16 +16,14 @@ struct Chunk {
 
 impl Default for Chunk {
     fn default() -> Self {
-        Self::EMPTY
+        Self {
+            some_masks: [0; LEN],
+            gravity_masks: [0; LEN],
+        }
     }
 }
 
 impl Chunk {
-    const EMPTY: Self = Self {
-        some_masks: [0; LEN],
-        gravity_masks: [0; LEN],
-    };
-
     fn tick(&mut self, left: &mut Self, right: &mut Self) {
         for y in 1..LEN {
             self.multi_down(left, right, y);
@@ -141,7 +139,6 @@ impl Chunk {
     }
 }
 
-#[derive(Clone)]
 struct Layer {
     map: HashMap<i32, Chunk>,
     simulate: HashSet<i32>,
@@ -160,29 +157,48 @@ impl ChunkStore {
                 .get_many_mut([&y, &(y - 1)])
                 .map(|opt| opt.unwrap());
 
-            let mut left_map = layer.map.clone();
-            let mut right_map = layer.map.clone();
-
-            let (left_shift, right_shift) = if y % 2 == 0 { (-1, 0) } else { (0, 1) };
-
-            for (x, chunk) in layer.map.iter().filter(|(x, _)| **x % 2 == 1) {
-                let left = left_map.get(&(x - 1)).unwrap();
-                let right = right_map.get(&(x + 1)).unwrap();
+            for x in layer.simulate.iter().copied().filter(|x| *x % 2 == 0) {
+                let left_adj = layer.map.get(&(x - 1)).unwrap().adj_y0();
+                let right_adj = layer.map.get(&(x + 1)).unwrap().adj_y0();
+                let chunk = layer.map.get_mut(&x).unwrap();
 
                 let [down_left, down_right] = if y % 2 == 0 {
                     prev_layer
                         .map
-                        .get_many_mut([&(x - 1), x])
+                        .get_many_mut([&(x - 1), &x])
                         .map(|opt| opt.unwrap())
                 } else {
                     prev_layer
                         .map
-                        .get_many_mut([x, &(x + 1)])
+                        .get_many_mut([&x, &(x + 1)])
                         .map(|opt| opt.unwrap())
                 };
+                
+                chunk.tick_y0(down_left, down_right, left_adj, right_adj);
             }
 
-            for (x, chunk) in layer.map.iter().filter(|(x, _)| **x % 2 == 0) {}
+            for x in layer.simulate.iter().copied().filter(|x| *x % 2 == 1) {
+                let left_adj = layer.map.get(&(x - 1)).unwrap().adj_y0();
+                let right_adj = layer.map.get(&(x + 1)).unwrap().adj_y0();
+                let chunk = layer.map.get_mut(&x).unwrap();
+
+                let [down_left, down_right] = if y % 2 == 0 {
+                    prev_layer
+                        .map
+                        .get_many_mut([&(x - 1), &x])
+                        .map(|opt| opt.unwrap())
+                } else {
+                    prev_layer
+                        .map
+                        .get_many_mut([&x, &(x + 1)])
+                        .map(|opt| opt.unwrap())
+                };
+                
+                chunk.tick_y0(down_left, down_right, left_adj, right_adj);
+            }
+
+            let mut left_map = layer.map.clone();
+            let mut right_map = layer.map.clone();
 
             for (x, chunk) in &mut layer.map {
                 let left = left_map.get_mut(&(x - 1)).unwrap();
@@ -194,83 +210,83 @@ impl ChunkStore {
     }
 }
 
-const SIZE: UVec2 = UVec2::splat(LEN as u32);
-const DISPLAY_FACTOR: u32 = 16;
+// const SIZE: UVec2 = UVec2::splat(LEN as u32);
+// const DISPLAY_FACTOR: u32 = 16;
 
 fn main() {
-    App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        resolution: ((SIZE + UVec2::splat(2)) * DISPLAY_FACTOR).into(),
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .set(ImagePlugin::default_nearest()),
-        )
-        .insert_resource(Time::<Fixed>::from_hz(60.0))
-        .init_resource::<Handles>()
-        .add_systems(Startup, setup)
-        .add_systems(FixedUpdate, (tick_simulation, mesh_cells).chain())
-        .run();
+//     App::new()
+//         .add_plugins(
+//             DefaultPlugins
+//                 .set(WindowPlugin {
+//                     primary_window: Some(Window {
+//                         resolution: ((SIZE + UVec2::splat(2)) * DISPLAY_FACTOR).into(),
+//                         ..default()
+//                     }),
+//                     ..default()
+//                 })
+//                 .set(ImagePlugin::default_nearest()),
+//         )
+//         .insert_resource(Time::<Fixed>::from_hz(60.0))
+//         .init_resource::<Handles>()
+//         .add_systems(Startup, setup)
+//         .add_systems(FixedUpdate, (tick_simulation, mesh_cells).chain())
+//         .run();
 }
 
-fn setup(mut commands: Commands) {
-    fn mask_gen(i: usize) -> u64 {
-        if i > 5 { 1 << 32 | 1 << 30 } else { 0 }
-    }
+// fn setup(mut commands: Commands) {
+//     fn mask_gen(i: usize) -> u64 {
+//         if i > 5 { 1 << 32 | 1 << 30 } else { 0 }
+//     }
 
-    commands.insert_resource(Chunk {
-        some_masks: array::from_fn(mask_gen),
-        gravity_masks: array::from_fn(mask_gen),
-        ..default()
-    });
+//     commands.insert_resource(Chunk {
+//         some_masks: array::from_fn(mask_gen),
+//         gravity_masks: array::from_fn(mask_gen),
+//         ..default()
+//     });
 
-    commands.spawn(Camera2d);
-}
+//     commands.spawn(Camera2d);
+// }
 
-fn tick_simulation(mut chunk: ResMut<Chunk>) {
-    chunk.tick_single()
-}
+// fn tick_simulation(mut chunk: ResMut<Chunk>) {
+//     chunk.tick_single()
+// }
 
-fn mesh_cells(
-    mut commands: Commands,
-    cell_entities: Query<Entity, With<Cell>>,
-    handles: Res<Handles>,
-    chunk: Res<Chunk>,
-) {
-    for cell_entity in cell_entities {
-        commands.entity(cell_entity).despawn();
-    }
+// fn mesh_cells(
+//     mut commands: Commands,
+//     cell_entities: Query<Entity, With<Cell>>,
+//     handles: Res<Handles>,
+//     chunk: Res<Chunk>,
+// ) {
+//     for cell_entity in cell_entities {
+//         commands.entity(cell_entity).despawn();
+//     }
 
-    for pos in chunk.iter_some() {
-        commands.spawn((
-            Transform::from_translation(
-                (pos.as_vec2() - (SIZE.as_vec2() / 2.0)).extend(0.0) * DISPLAY_FACTOR as f32,
-            ),
-            Mesh2d(handles.0.clone()),
-            MeshMaterial2d(handles.1.clone()),
-            Cell,
-        ));
-    }
-}
+//     for pos in chunk.iter_some() {
+//         commands.spawn((
+//             Transform::from_translation(
+//                 (pos.as_vec2() - (SIZE.as_vec2() / 2.0)).extend(0.0) * DISPLAY_FACTOR as f32,
+//             ),
+//             Mesh2d(handles.0.clone()),
+//             MeshMaterial2d(handles.1.clone()),
+//             Cell,
+//         ));
+//     }
+// }
 
-#[derive(Resource)]
-struct Handles(Handle<Mesh>, Handle<ColorMaterial>);
+// #[derive(Resource)]
+// struct Handles(Handle<Mesh>, Handle<ColorMaterial>);
 
-impl FromWorld for Handles {
-    fn from_world(world: &mut World) -> Self {
-        let mesh = world
-            .resource_mut::<Assets<Mesh>>()
-            .add(Rectangle::from_length(DISPLAY_FACTOR as f32));
-        let color = world
-            .resource_mut::<Assets<ColorMaterial>>()
-            .add(Color::WHITE);
-        Self(mesh, color)
-    }
-}
+// impl FromWorld for Handles {
+//     fn from_world(world: &mut World) -> Self {
+//         let mesh = world
+//             .resource_mut::<Assets<Mesh>>()
+//             .add(Rectangle::from_length(DISPLAY_FACTOR as f32));
+//         let color = world
+//             .resource_mut::<Assets<ColorMaterial>>()
+//             .add(Color::WHITE);
+//         Self(mesh, color)
+//     }
+// }
 
-#[derive(Component)]
-struct Cell;
+// #[derive(Component)]
+// struct Cell;

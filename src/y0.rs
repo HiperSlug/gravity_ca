@@ -7,13 +7,13 @@ const LEFT_HALF_MASK: u64 = u64::MAX >> 32;
 const RIGHT_HALF_MASK: u64 = u64::MAX << 32;
 
 #[derive(Clone, Copy)]
-struct Adj {
+pub struct Adj {
     some_mask: u64,
     gravity_mask: u64,
 }
 
 impl Chunk {
-    fn adj_y0(&self) -> Adj {
+    pub fn adj_y0(&self) -> Adj {
         Adj {
             some_mask: self.some_masks[0],
             gravity_mask: self.gravity_masks[0],
@@ -65,7 +65,7 @@ impl Adjacent {
 }
 
 impl Chunk {
-    fn tick_y0(
+    pub fn tick_y0(
         &mut self,
         down_left: &mut Self,
         down_right: &mut Self,
