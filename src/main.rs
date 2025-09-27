@@ -1,7 +1,6 @@
 use bevy::{
     platform::collections::{HashMap, HashSet},
     prelude::*,
-    tasks::prelude::*,
 };
 use std::{array, collections::BTreeSet, iter::from_fn};
 
@@ -10,7 +9,7 @@ const LEN: usize = u64::BITS as usize;
 #[derive(Resource, Clone)]
 struct Chunk {
     some_masks: [u64; LEN],
-    dynamic_masks: [u64; LEN],
+    gravity_masks: [u64; LEN],
 }
 
 impl Default for Chunk {
@@ -22,10 +21,127 @@ impl Default for Chunk {
 impl Chunk {
     const EMPTY: Self = Self {
         some_masks: [0; LEN],
-        dynamic_masks: [0; LEN],
+        gravity_masks: [0; LEN],
     };
 
-    /// only `self`s simulation is be accurate
+    fn tick_y0(&mut self, down_left: &mut Self, down_right: &mut Self, left: &Self, right: &Self) {
+        let mut sim_gravity_masks = [left.gravity_masks[0], right.gravity_masks[0]];
+        let mut sim_some_masks: ([u64; 2], [u64; 2]) = (
+            [left.some_masks[0], right.some_masks[0]],
+            [
+                down_left.some_masks[LEN - 1] >> 32,
+                down_right.some_masks[LEN - 1] << 32,
+            ],
+        );
+
+        self.down_y0(down_left, down_right);
+        Self::sim_down_y0(&mut sim_some_masks, &mut sim_gravity_masks);
+
+        self.down_left_y0(
+            down_left,
+            down_right,
+            sim_some_masks.0[0] << 63,
+            sim_some_masks.1[0] << 63, 
+        );
+
+        Self::sim_down_left_y0(&mut sim_some_masks, &mut sim_gravity_masks);
+
+        self.down_right_y0(
+            down_left,
+            down_right,
+            sim_some_masks.0[1] >> 63,
+            sim_some_masks.1[1] >> 63, 
+        );
+    }
+
+    fn down_y0(&mut self, down_left: &mut Self, down_right: &mut Self) {
+        let gravity_mask = self.gravity_masks[0];
+        let down_some_mask =
+            down_left.some_masks[LEN - 1] << 32 | down_right.some_masks[LEN - 1] >> 32;
+
+        let fall_mask = gravity_mask & !down_some_mask;
+
+        self.some_masks[0] &= !fall_mask;
+        self.gravity_masks[0] &= !fall_mask;
+
+        down_left.some_masks[LEN - 1] |= fall_mask << 32;
+        down_left.gravity_masks[LEN - 1] |= fall_mask << 32;
+
+        down_right.some_masks[LEN - 1] |= fall_mask >> 32;
+        down_right.gravity_masks[LEN - 1] |= fall_mask >> 32;
+    }
+
+    fn sim_down_y0(sim_some_masks: &mut ([u64; 2], [u64; 2]), sim_gravity_masks: &mut [u64; 2]) {
+        for i in 0..2 {
+            let gravity_mask = sim_gravity_masks[i];
+            let down_some_mask = sim_some_masks.1[i];
+
+            let fall_mask = gravity_mask & !down_some_mask;
+
+            sim_gravity_masks[i] &= !fall_mask;
+            sim_some_masks.0[i] &= !fall_mask;
+
+            sim_some_masks.1[i] |= fall_mask;
+        }
+    }
+
+    fn down_left_y0(
+        &mut self,
+        down_left: &mut Self,
+        down_right: &mut Self,
+        left_some: u64,
+        down_left_some: u64,
+    ) {
+        let gravity_mask = self.gravity_masks[0];
+        let left_some_mask = (self.some_masks[0] >> 1) | left_some;
+        let down_left_some_mask: u64 =
+            (down_left.some_masks[LEN - 1] << 31) | (down_right.some_masks[LEN - 1] >> 33) | down_left_some;
+
+        let fall_mask = gravity_mask & !left_some_mask & !down_left_some_mask;
+
+        self.some_masks[0] &= !fall_mask;
+        self.gravity_masks[0] &= !fall_mask;
+
+        down_left.some_masks[LEN - 1] |= fall_mask << 33;
+        down_left.gravity_masks[LEN - 1] |= fall_mask << 33;
+
+        down_right.some_masks[LEN - 1] |= fall_mask >> 31; // 1 questional bit here
+        down_right.gravity_masks[LEN - 1] |= fall_mask >> 31;
+    }
+
+    fn sim_down_left_y0(sim_some_masks: &mut ([u64; 2], [u64; 2]), sim_gravity_masks: &mut [u64; 2]) {
+        let right_gravity_mask = sim_gravity_masks[1] << 1;
+        let some_mask = sim_some_masks.0[1];
+        let down_some_mask = sim_some_masks.1[1];
+
+        let right_fall_mask = right_gravity_mask & !some_mask & !down_some_mask;
+        sim_some_masks.1[1] |= right_fall_mask;
+    }
+
+    fn down_right_y0(
+        &mut self,
+        down_left: &mut Self,
+        down_right: &mut Self,
+        right_some: u64,
+        down_right_some: u64, 
+    ) {
+        let gravity_mask = self.gravity_masks[0];
+        let right_some_mask = (self.some_masks[0] << 1) | right_some;
+        let down_right_some_mask =
+            (down_left.some_masks[LEN - 1] << 33) | (down_right.some_masks[LEN - 1] >> 31) | down_right_some;
+
+        let fall_mask = gravity_mask & !right_some_mask & !down_right_some_mask;
+
+        self.some_masks[0] &= !fall_mask;
+        self.gravity_masks[0] &= !fall_mask;
+
+        down_left.some_masks[LEN - 1] |= fall_mask << 31;
+        down_left.gravity_masks[LEN - 1] |= fall_mask << 31;
+
+        down_right.some_masks[LEN - 1] |= fall_mask >> 33;
+        down_right.gravity_masks[LEN - 1] |= fall_mask >> 33;
+    }
+
     fn tick(&mut self, left: &mut Self, right: &mut Self) {
         for y in 1..LEN {
             self.multi_down(left, right, y);
@@ -47,56 +163,82 @@ impl Chunk {
     }
 
     fn multi_down_left(&mut self, left: &mut Self, right: &mut Self, y: usize) {
-        right.down_left(self, y);
-        self.down_left(left, y);
-        left.down_left(&default(), y);
+        right.down_left(y, self);
+        self.down_left(y, left);
+        left.down_left_void(y);
     }
 
     fn multi_down_right(&mut self, left: &mut Self, right: &mut Self, y: usize) {
-        left.down_right(self, y);
-        self.down_right(right, y);
-        right.down_right(&default(), y);
+        left.down_right(y, self);
+        self.down_right(y, right);
+        right.down_right_void(y);
     }
 
     fn down(&mut self, y: usize) {
-        let dynamic_mask = self.dynamic_masks[y];
+        let gravity_mask = self.gravity_masks[y];
         let down_some_mask = self.some_masks[y - 1];
 
-        let fall_mask = dynamic_mask & !down_some_mask;
+        let fall_mask = gravity_mask & !down_some_mask;
 
         self.some_masks[y] &= !fall_mask;
-        self.dynamic_masks[y] &= !fall_mask;
+        self.gravity_masks[y] &= !fall_mask;
 
         self.some_masks[y - 1] |= fall_mask;
-        self.dynamic_masks[y - 1] |= fall_mask;
+        self.gravity_masks[y - 1] |= fall_mask;
     }
 
-    fn down_left(&mut self, left: &Self, y: usize) {
-        let dynamic_mask = self.dynamic_masks[y];
-        let left_some_mask = (self.some_masks[y] >> 1) | (left.some_masks[y] << 63);
-        let down_left_some_mask = (self.some_masks[y - 1] >> 1) | (left.some_masks[y - 1] << 63);
+    #[inline]
+    fn down_left(&mut self, y: usize, left: &Self) {
+        let left_some = left.some_masks[y] << 63;
+        let down_left_some = left.some_masks[y - 1] << 63;
 
-        let fall_mask = dynamic_mask & !left_some_mask & !down_left_some_mask;
+        self._down_left(y, left_some, down_left_some)
+    }
+
+    #[inline]
+    fn down_left_void(&mut self, y: usize) {
+        self._down_left(y, 0, 0);
+    }
+
+    fn _down_left(&mut self, y: usize, left_some: u64, down_left_some: u64) {
+        let gravity_mask = self.gravity_masks[y];
+        let left_some_mask = (self.some_masks[y] >> 1) | left_some;
+        let down_left_some_mask = (self.some_masks[y - 1] >> 1) | down_left_some;
+
+        let fall_mask = gravity_mask & !left_some_mask & !down_left_some_mask;
 
         self.some_masks[y] &= !fall_mask;
-        self.dynamic_masks[y] &= !fall_mask;
+        self.gravity_masks[y] &= !fall_mask;
 
         self.some_masks[y - 1] |= fall_mask << 1;
-        self.dynamic_masks[y - 1] |= fall_mask << 1;
+        self.gravity_masks[y - 1] |= fall_mask << 1;
     }
 
-    fn down_right(&mut self, right: &Self, y: usize) {
-        let dynamic_mask = self.dynamic_masks[y];
-        let right_some_mask = (self.some_masks[y] << 1) | (right.some_masks[y] >> 63);
-        let down_right_some_mask = (self.some_masks[y - 1] << 1) | (right.some_masks[y - 1] >> 63);
+    #[inline]
+    fn down_right(&mut self, y: usize, right: &Self) {
+        let right_some = right.some_masks[y] >> 63;
+        let down_right_some = right.some_masks[y - 1] >> 63;
 
-        let fall_mask = dynamic_mask & !right_some_mask & !down_right_some_mask;
+        self._down_right(y, right_some, down_right_some);
+    }
+
+    #[inline]
+    fn down_right_void(&mut self, y: usize) {
+        self._down_right(y, 0, 0);
+    }
+
+    fn _down_right(&mut self, y: usize, right_some: u64, down_right_some: u64) {
+        let gravity_mask = self.gravity_masks[y];
+        let right_some_mask = (self.some_masks[y] << 1) | right_some;
+        let down_right_some_mask = (self.some_masks[y - 1] << 1) | down_right_some;
+
+        let fall_mask = gravity_mask & !right_some_mask & !down_right_some_mask;
 
         self.some_masks[y] &= !fall_mask;
-        self.dynamic_masks[y] &= !fall_mask;
+        self.gravity_masks[y] &= !fall_mask;
 
         self.some_masks[y - 1] |= fall_mask >> 1;
-        self.dynamic_masks[y - 1] |= fall_mask >> 1;
+        self.gravity_masks[y - 1] |= fall_mask >> 1;
     }
 
     fn iter_some(&self) -> impl Iterator<Item = UVec2> {
@@ -128,37 +270,42 @@ struct ChunkStore {
 
 impl ChunkStore {
     fn tick(&mut self) {
-        self.for_each_consecutive_simulted_window_mut(|layer, prev_layer| {
-            let mut chunks = layer
-                .map
-                .keys()
-                .copied()
-                .map(|x| {
-                    let left = layer.map.get(&(x - 1)).unwrap().clone();
-                    let right = layer.map.get(&(x + 1)).unwrap().clone();
-                    let chunk = layer.map.get_mut(&x).unwrap();
-                    (x, left, chunk, right)
-                })
-                .collect::<Vec<_>>();
-
-            chunks.par_chunk_map_mut(ComputeTaskPool::get(), 8, |_, slice| {
-                for (x, left, chunk, right) in slice {
-                    chunk.tick_multi(left, right);
-                }
-            });
-        });
-    }
-
-    fn for_each_consecutive_simulted_window_mut(
-        &mut self,
-        mut f: impl FnMut(&mut Layer, &mut Layer),
-    ) {
         for &y in &self.simulate {
-            let prev_y = y - 1;
+            let [layer, prev_layer] = self
+                .map
+                .get_many_mut([&y, &(y - 1)])
+                .map(|opt| opt.unwrap());
 
-            let [layer, prev_layer] = self.map.get_many_mut([&y, &prev_y]);
+            let mut left_map = layer.map.clone();
+            let mut right_map = layer.map.clone();
 
-            f(layer.unwrap(), prev_layer.unwrap())
+            let (left_shift, right_shift) = if y % 2 == 0 { (-1, 0) } else { (0, 1) };
+
+            for (x, chunk) in layer.map.iter().filter(|(x, _)| **x % 2 == 1) {
+                let left = left_map.get(&(x - 1)).unwrap();
+                let right = right_map.get(&(x + 1)).unwrap();
+
+                let [down_left, down_right] = if y % 2 == 0 {
+                    prev_layer
+                        .map
+                        .get_many_mut([&(x - 1), x])
+                        .map(|opt| opt.unwrap())
+                } else {
+                    prev_layer
+                        .map
+                        .get_many_mut([x, &(x + 1)])
+                        .map(|opt| opt.unwrap())
+                };
+            }
+
+            for (x, chunk) in layer.map.iter().filter(|(x, _)| **x % 2 == 0) {}
+
+            for (x, chunk) in &mut layer.map {
+                let left = left_map.get_mut(&(x - 1)).unwrap();
+                let right = right_map.get_mut(&(x + 1)).unwrap();
+
+                chunk.tick(left, right);
+            }
         }
     }
 }
@@ -193,7 +340,7 @@ fn setup(mut commands: Commands) {
 
     commands.insert_resource(Chunk {
         some_masks: array::from_fn(mask_gen),
-        dynamic_masks: array::from_fn(mask_gen),
+        gravity_masks: array::from_fn(mask_gen),
         ..default()
     });
 
