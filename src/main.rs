@@ -1,47 +1,61 @@
 use bevy::{
     platform::collections::{HashMap, HashSet},
     prelude::*,
-    tasks::ParallelIterator,
+    tasks::prelude::*,
 };
-use std::{array, collections::BTreeMap, iter::from_fn};
+use std::{array, collections::BTreeSet, iter::from_fn};
 
 const LEN: usize = u64::BITS as usize;
 
-const FIRST_BIT: u64 = 1;
-const LAST_BIT: u64 = 1 << (u64::BITS - 1);
-
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 struct Chunk {
     some_masks: [u64; LEN],
     dynamic_masks: [u64; LEN],
-    state: bool,
 }
 
 impl Default for Chunk {
     fn default() -> Self {
-        Self {
-            some_masks: [0; LEN],
-            dynamic_masks: [0; LEN],
-            state: default(),
-        }
+        Self::EMPTY
     }
 }
 
 impl Chunk {
-    fn tick_single(&mut self) {
-        self.state = !self.state;
+    const EMPTY: Self = Self {
+        some_masks: [0; LEN],
+        dynamic_masks: [0; LEN],
+    };
 
+    /// only `self`s simulation is be accurate
+    fn tick(&mut self, left: &mut Self, right: &mut Self) {
         for y in 1..LEN {
-            self.down(y);
+            self.multi_down(left, right, y);
 
-            if (y % 2 == 0) ^ self.state {
-                self.down_left(y);
-                self.down_right(y);
+            if y % 2 == 0 {
+                self.multi_down_left(left, right, y);
+                self.multi_down_right(left, right, y);
             } else {
-                self.down_left(y);
-                self.down_right(y);
+                self.multi_down_right(left, right, y);
+                self.multi_down_left(left, right, y);
             }
         }
+    }
+
+    fn multi_down(&mut self, left: &mut Self, right: &mut Self, y: usize) {
+        self.down(y);
+        left.down(y);
+        right.down(y);
+    }
+
+    fn multi_down_left(&mut self, left: &mut Self, right: &mut Self, y: usize) {
+        right.down_left(self, y);
+        self.down_left(left, y);
+        left.down_left(&default(), y);
+    }
+
+    fn multi_down_right(&mut self, left: &mut Self, right: &mut Self, y: usize) {
+        left.down_right(self, y);
+        self.down_right(right, y);
+        right.down_right(&default(), y);
     }
 
     fn down(&mut self, y: usize) {
@@ -57,10 +71,10 @@ impl Chunk {
         self.dynamic_masks[y - 1] |= fall_mask;
     }
 
-    fn down_left(&mut self, y: usize) {
+    fn down_left(&mut self, left: &Self, y: usize) {
         let dynamic_mask = self.dynamic_masks[y];
-        let left_some_mask = (self.some_masks[y] >> 1) | FIRST_BIT;
-        let down_left_some_mask = (self.some_masks[y - 1] >> 1) | FIRST_BIT;
+        let left_some_mask = (self.some_masks[y] >> 1) | (left.some_masks[y] << 63);
+        let down_left_some_mask = (self.some_masks[y - 1] >> 1) | (left.some_masks[y - 1] << 63);
 
         let fall_mask = dynamic_mask & !left_some_mask & !down_left_some_mask;
 
@@ -71,10 +85,10 @@ impl Chunk {
         self.dynamic_masks[y - 1] |= fall_mask << 1;
     }
 
-    fn down_right(&mut self, y: usize) {
+    fn down_right(&mut self, right: &Self, y: usize) {
         let dynamic_mask = self.dynamic_masks[y];
-        let right_some_mask = (self.some_masks[y] << 1) | LAST_BIT;
-        let down_right_some_mask = (self.some_masks[y - 1] << 1) | LAST_BIT;
+        let right_some_mask = (self.some_masks[y] << 1) | (right.some_masks[y] >> 63);
+        let down_right_some_mask = (self.some_masks[y - 1] << 1) | (right.some_masks[y - 1] >> 63);
 
         let fall_mask = dynamic_mask & !right_some_mask & !down_right_some_mask;
 
@@ -101,40 +115,51 @@ impl Chunk {
     }
 }
 
-struct LayerStore {
+#[derive(Clone)]
+struct Layer {
     map: HashMap<i32, Chunk>,
     simulate: HashSet<i32>,
 }
 
 struct ChunkStore {
-    map: BTreeMap<i32, LayerStore>,
-    simulate: HashSet<i32>,
+    map: HashMap<i32, Layer>,
+    simulate: BTreeSet<i32>,
 }
 
 impl ChunkStore {
-    fn iter_layers(
-        &mut self,
-    ) -> impl Iterator<Item = (Vec<(&i32, &mut Chunk)>, &mut HashMap<i32, Chunk>)> {
-        debug_assert!(self.simulate.iter().all(|k| self.map.contains_key(&(k - 1))
-            && self.map.contains_key(&k)
-            && self.map.contains_key(&(k + 1))));
-
-        self.simulate.iter().map(|y| {
-            let layer_store = self.map.get_mut(&y).unwrap();
-            // SAFETY
-            // k != (k - 1)
-            let last_layer_store = unsafe { self.map.get_mut(&(y - 1)).unwrap() };
-
-            let mut_chunks = layer_store
+    fn tick(&mut self) {
+        self.for_each_consecutive_simulted_window_mut(|layer, prev_layer| {
+            let mut chunks = layer
                 .map
-                .iter_mut()
-                .filter(|(x, _)| layer_store.simulate.contains(x))
+                .keys()
+                .copied()
+                .map(|x| {
+                    let left = layer.map.get(&(x - 1)).unwrap().clone();
+                    let right = layer.map.get(&(x + 1)).unwrap().clone();
+                    let chunk = layer.map.get_mut(&x).unwrap();
+                    (x, left, chunk, right)
+                })
                 .collect::<Vec<_>>();
 
-            let last_layer_map = &mut last_layer_store.map;
+            chunks.par_chunk_map_mut(ComputeTaskPool::get(), 8, |_, slice| {
+                for (x, left, chunk, right) in slice {
+                    chunk.tick_multi(left, right);
+                }
+            });
+        });
+    }
 
-            (mut_chunks, last_layer_map)
-        })
+    fn for_each_consecutive_simulted_window_mut(
+        &mut self,
+        mut f: impl FnMut(&mut Layer, &mut Layer),
+    ) {
+        for &y in &self.simulate {
+            let prev_y = y - 1;
+
+            let [layer, prev_layer] = self.map.get_many_mut([&y, &prev_y]);
+
+            f(layer.unwrap(), prev_layer.unwrap())
+        }
     }
 }
 
