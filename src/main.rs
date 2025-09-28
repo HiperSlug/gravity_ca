@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, window::PrimaryWindow};
 use std::{array, iter::from_fn};
 
 const LEN: usize = u64::BITS as usize;
@@ -20,6 +20,22 @@ impl Default for Chunk {
             dynamic_masks: [0; LEN],
             state: default(),
         }
+    }
+}
+
+impl Chunk {
+    fn set_dynamic(&mut self, pos: UVec2) {
+        let mask = 1 << pos.x;
+
+        self.some_masks[pos.y as usize] |= mask;
+        self.dynamic_masks[pos.y as usize] |= mask;
+    }
+
+    fn set_none(&mut self, pos: UVec2) {
+        let mask = 1 << pos.x;
+
+        self.some_masks[pos.y as usize] &= !mask;
+        self.dynamic_masks[pos.y as usize] &= !mask;
     }
 }
 
@@ -55,8 +71,8 @@ impl Chunk {
 
     fn down_left(&mut self, y: usize) {
         let dynamic_mask = self.dynamic_masks[y];
-        let left_some_mask = (self.some_masks[y] >> 1) | FIRST_BIT;
-        let down_left_some_mask = (self.some_masks[y - 1] >> 1) | FIRST_BIT;
+        let left_some_mask = (self.some_masks[y] >> 1) | LAST_BIT;
+        let down_left_some_mask = (self.some_masks[y - 1] >> 1) | LAST_BIT;
 
         let fall_mask = dynamic_mask & !left_some_mask & !down_left_some_mask;
 
@@ -69,8 +85,8 @@ impl Chunk {
 
     fn down_right(&mut self, y: usize) {
         let dynamic_mask = self.dynamic_masks[y];
-        let right_some_mask = (self.some_masks[y] << 1) | LAST_BIT;
-        let down_right_some_mask = (self.some_masks[y - 1] << 1) | LAST_BIT;
+        let right_some_mask = (self.some_masks[y] << 1) | FIRST_BIT;
+        let down_right_some_mask = (self.some_masks[y - 1] << 1) | FIRST_BIT;
 
         let fall_mask = dynamic_mask & !right_some_mask & !down_right_some_mask;
 
@@ -113,10 +129,12 @@ fn main() {
                 })
                 .set(ImagePlugin::default_nearest()),
         )
-        .insert_resource(Time::<Fixed>::from_hz(60.0))
+        .insert_resource(Time::<Fixed>::from_hz(30.0))
+        .init_resource::<CursorCellPos>()
         .init_resource::<Handles>()
         .add_systems(Startup, setup)
         .add_systems(FixedUpdate, (tick_simulation, mesh_cells).chain())
+        .add_systems(Update, (update_cursors_cell_pos, input_set_cells).chain())
         .run();
 }
 
@@ -177,3 +195,31 @@ impl FromWorld for Handles {
 
 #[derive(Component)]
 struct Cell;
+
+#[derive(Resource, Default)]
+struct CursorCellPos(Option<UVec2>);
+
+fn update_cursors_cell_pos(mut cursor_cell_pos: ResMut<CursorCellPos>, window: Single<&Window, With<PrimaryWindow>>, cam_query: Single<(&Camera, &GlobalTransform)>) {
+    let (camera, camera_transform) = cam_query.into_inner();
+
+    if let Some(cursor_position) = window.cursor_position()
+        && let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_position)
+    {
+        let cell_pos = (world_pos.div_euclid(Vec2::splat(DISPLAY_FACTOR as f32)).as_ivec2() + (SIZE.as_ivec2() / 2)).as_uvec2();
+        if cell_pos.cmplt(SIZE).all() {
+            cursor_cell_pos.0 = Some(cell_pos);
+        } else {
+            cursor_cell_pos.0 = None;
+        }
+    }
+}
+
+fn input_set_cells(mb_state: Res<ButtonInput<MouseButton>>, world_cursor_pos: Res<CursorCellPos>, mut chunk: ResMut<Chunk>) {
+    if let Some(cell_pos) = world_cursor_pos.0 {
+        if mb_state.pressed(MouseButton::Left) {
+            chunk.set_dynamic(cell_pos);
+        } else if mb_state.pressed(MouseButton::Right) {
+            chunk.set_none(cell_pos);
+        }
+    }
+}
