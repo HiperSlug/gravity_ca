@@ -1,5 +1,5 @@
 use bevy::{prelude::*, window::PrimaryWindow};
-use std::{array, iter::from_fn};
+use std::iter::from_fn;
 
 const LEN: usize = u64::BITS as usize;
 
@@ -139,13 +139,9 @@ fn main() {
 }
 
 fn setup(mut commands: Commands) {
-    fn mask_gen(i: usize) -> u64 {
-        if i > 5 { 1 << 32 | 1 << 30 } else { 0 }
-    }
-
     commands.insert_resource(Chunk {
-        some_masks: array::from_fn(mask_gen),
-        dynamic_masks: array::from_fn(mask_gen),
+        some_masks: [0; LEN],
+        dynamic_masks: [0; LEN],
         ..default()
     });
 
@@ -206,7 +202,7 @@ fn update_cursors_cell_pos(mut cursor_cell_pos: ResMut<CursorCellPos>, window: S
         && let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_position)
     {
         let cell_pos = ((world_pos / DISPLAY_FACTOR as f32) + (SIZE.as_vec2() / 2.0) + Vec2::new(0.0, 0.5)).as_ivec2();
-        if cell_pos.cmplt(SIZE.as_ivec2()).all() && cell_pos.cmpgt(IVec2::ZERO).all() {
+        if cell_pos.cmplt(SIZE.as_ivec2()).all() && cell_pos.cmpge(IVec2::ZERO).all() {
             cursor_cell_pos.0 = Some(cell_pos.as_uvec2());
         } else {
             cursor_cell_pos.0 = None;
