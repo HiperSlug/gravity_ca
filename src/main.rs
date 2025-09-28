@@ -122,7 +122,7 @@ fn main() {
             DefaultPlugins
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        resolution: ((SIZE + UVec2::splat(2)) * DISPLAY_FACTOR).into(),
+                        resolution: (SIZE * DISPLAY_FACTOR).into(),
                         ..default()
                     }),
                     ..default()
@@ -169,7 +169,7 @@ fn mesh_cells(
     for pos in chunk.iter_some() {
         commands.spawn((
             Transform::from_translation(
-                (pos.as_vec2() - (SIZE.as_vec2() / 2.0)).extend(0.0) * DISPLAY_FACTOR as f32,
+                ((pos.as_vec2() + Vec2::splat(0.5)) - (SIZE.as_vec2() / 2.0)).extend(0.0) * DISPLAY_FACTOR as f32,
             ),
             Mesh2d(handles.0.clone()),
             MeshMaterial2d(handles.1.clone()),
@@ -205,9 +205,9 @@ fn update_cursors_cell_pos(mut cursor_cell_pos: ResMut<CursorCellPos>, window: S
     if let Some(cursor_position) = window.cursor_position()
         && let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_position)
     {
-        let cell_pos = (world_pos.div_euclid(Vec2::splat(DISPLAY_FACTOR as f32)).as_ivec2() + (SIZE.as_ivec2() / 2)).as_uvec2();
-        if cell_pos.cmplt(SIZE).all() {
-            cursor_cell_pos.0 = Some(cell_pos);
+        let cell_pos = ((world_pos / DISPLAY_FACTOR as f32) + (SIZE.as_vec2() / 2.0) + Vec2::new(0.0, 0.5)).as_ivec2();
+        if cell_pos.cmplt(SIZE.as_ivec2()).all() && cell_pos.cmpgt(IVec2::ZERO).all() {
+            cursor_cell_pos.0 = Some(cell_pos.as_uvec2());
         } else {
             cursor_cell_pos.0 = None;
         }
