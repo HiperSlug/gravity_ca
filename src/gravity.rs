@@ -96,7 +96,7 @@ pub mod non_zero {
 }
 
 pub mod zero {
-    use crate::chunk::{LEN, Chunk};
+    use crate::chunk::{Chunk, LEN};
 
     const TOP: usize = LEN - 1;
     const BOTTOM: usize = 0;
@@ -169,7 +169,7 @@ pub mod zero {
             down_right: &mut Self,
             left_gravity_masks: GravityMasks,
             right_gravity_masks: GravityMasks,
-            state: bool, 
+            state: bool,
         ) {
             let mut left_sim = AdjSim {
                 masks: left_gravity_masks,
@@ -195,13 +195,11 @@ pub mod zero {
 
                 self.down_right_z(down_left, down_right, right_sim);
             }
-            
         }
 
         fn down_z(&mut self, down_left: &mut Self, down_right: &mut Self) {
             let gravity_mask = self.gravity_masks[BOTTOM];
-            let down_some_mask =
-                down_left.some_masks[TOP] << 32 | down_right.some_masks[TOP] >> 32;
+            let down_some_mask = down_left.some_masks[TOP] << 32 | down_right.some_masks[TOP] >> 32;
 
             let fall_mask = gravity_mask & !down_some_mask;
 
@@ -253,5 +251,4 @@ pub mod zero {
             down_right.gravity_masks[TOP] |= (fall_mask << 31) & LEFT_HALF_MASK;
         }
     }
-
 }
