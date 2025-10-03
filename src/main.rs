@@ -139,11 +139,15 @@ fn main() {
 }
 
 fn setup(mut commands: Commands) {
-    commands.insert_resource(Chunk {
+    let mut c = Chunk {
         some_masks: [0; LEN],
         dynamic_masks: [0; LEN],
         ..default()
-    });
+    };
+
+    c.set_dynamic(uvec2(LEN as u32 / 2, LEN as u32 / 2));
+
+    commands.insert_resource(c);
 
     commands.spawn(Camera2d);
 }
